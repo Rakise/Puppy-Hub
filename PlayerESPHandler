@@ -6,86 +6,95 @@ local Utils = loadstring(game:HttpGet("https://raw.githubusercontent.com/Rakise/
 local utils = Utils.new()
 local ConnectionManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/Rakise/Puppy-Hub/refs/heads/main/ConnectionManager"))()
 
--- Cache global de objetos pesados
+-- Cache global
 local LocalPlayer = Players.LocalPlayer
 local floor = math.floor
 local format = string.format
 local tick = tick
 local pairs = pairs
 local ipairs = ipairs
-
--- Cache de funções Roblox para evitar indexação repetida
 local newInstance = Instance.new
 
--- Constantes para otimização
-local UPDATE_INTERVAL = 0.5 -- Intervalo de atualização dos billboards
+-- Constantes
+local UPDATE_INTERVAL = 0.5 
 
--- NEW: Class identification table
-local classIdentify = {
-	["DRUID"] = {"Perflora", "Floresco", "WiseCasting", "FastSigns"},
-	["WHPSRR"] = {"Elegant Slash", "Needle's Eye", "RapierTraining", "Acrobat"},
-	["D-SIGL"] = {"Dark Eruption", "Dark Flame Burst", "PlateTraining", "MercenaryCarry"},
-	["SHNOBI"] = {"Grapple", "Resurrection", "FeatherFall", "UpgradedAgility"},
-	["FACLES"] = {"Ethereal Strike", "Shadow Fan", "Chain Lethality", "UpgradedBane"},
-	["M-NCRO"] = {"Secare", "Furantur", "WiseCasting", "FastSigns"},
-	["DEEP-K"] = {"Chain Pull", "Leviathan Plunge", "FighterFootwork", "PrinceBlessing"},
-	["ABYS-W"] = {"Abyssal Scream", "Wrathful Leap", "Abysswalker", "MercenaryCarry"},
-	["ONI"] = {"Axe Kick", "Demon Step", "Misogi", "TrainedCombat"},
-	["LPRDST"] = {"Ruby Shard", "Sapphire Shard", "Sharpener", "Gemcutter"},
-	["U-BARD"] = {"Sweet Soothing", "Joyous Dance", "MusiciansResolve", "BlastMeter"},
-	["M-ILUS"] = {"Globus", "Dominus", "WiseCasting", "FastSigns"},
-	["SIGL-C"] = {"Charged Blow", "Hyper Body", "ChargeMastery", "PlateTraining"},
-	["DSAGE"] = {"Lightning Drop", "Lightning Elbow", "MonasteryShield", "ChiBlock"},
-	["DSLAYR"] = {"Thunder Spear Crash", "Dragon Blood", "FighterFootwork", "Dragon Awakening"}
+-- UPDATED: Class Identification using Ability Names directly
+-- Maps Ability Name -> Class Display Name
+local UltraAbilities = {
+    ["Lightning Drop"] = "Dragon Sage",
+    ["Axe Kick"] = "Oni",
+    ["Observe"] = "Illusionist",
+    ["Perflora"] = "Druid",
+    ["Secare"] = "Necromancer",
+    ["Elegant Slash"] = "Whisperer",
+    ["Joyous Dance"] = "Bard",
+    ["Grapple"] = "Shinobi",
+    ["Shadow Fan"] = "Faceless",
+    ["Dragon Awakening"] = "Dragon Slayer",
+    ["Chain Pull"] = "Deep Knight",
+    ["Hyper Body"] = "Sigil Knight Commander",
+    ["Dark Eruption"] = "Dark Sigil",
+    ["Hammer"] = "Lapidarist",
+    ["Katana"] = "Ronin",
+    ["Abyssal Scream"] = "Abysswalker",
+    ["Puncture"] = "Vanguard"
 }
 
--- NEW: Updated class colors based on new abbreviations
-local class_colors = {
-	["DRUID"] = "#55FF55",
-	["WHPSRR"] = "#AAAAAA", -- Spy
-	["D-SIGL"] = "#55557F", -- Wraith
-	["SHNOBI"] = "#FFAA00", -- Shinobi
-	["FACLES"] = "#FF55FF", -- Faceless
-	["M-NCRO"] = "#AA0000", -- Necro
-	["DEEP-K"] = "#0055AA", -- Deep
-	["ABYS-W"] = "#2A0055", -- Abyss
-	["ONI"] = "#FF5555",
-	["LPRDST"] = "#FFAA7F", -- Smith
-	["U-BARD"] = "#FFFF55", -- Bard
-	["M-ILUS"] = "#AA55FF", -- Illusionist
-	["SIGL-C"] = "#FF7F00", -- Sigil
-	["DSAGE"] = "#55FFFF",
-	["DSLAYR"] = "#FF0000", -- Slayer
-	["FRESH"] = "#FFFFFF"
+-- Fallback color if class isn't strictly defined in a color table, we can generate one or use white
+local CLASS_COLORS = {
+    ["Dragon Sage"] = "#55FFFF",
+    ["Oni"] = "#FF5555",
+    ["Illusionist"] = "#AA55FF",
+    ["Druid"] = "#55FF55",
+    ["Necromancer"] = "#AA0000",
+    ["Whisperer"] = "#AAAAAA",
+    ["Bard"] = "#FFFF55",
+    ["Shinobi"] = "#FFAA00",
+    ["Faceless"] = "#FF55FF",
+    ["Dragon Slayer"] = "#FF0000",
+    ["Deep Knight"] = "#0055AA",
+    ["Sigil Knight Commander"] = "#FF7F00",
+    ["Dark Sigil"] = "#55557F",
+    ["Lapidarist"] = "#FFAA7F",
+    ["Ronin"] = "#FFFFFF",
+    ["Abysswalker"] = "#2A0055",
+    ["Vanguard"] = "#CCCCCC",
+    ["FRESH"] = "#FFFFFF"
 }
 
--- ADDED: Observe color
-local OBSERVE_COLOR_HEX = "#55FFFF" -- Light Blue/Cyan
+local OBSERVE_COLOR_HEX = "#55FFFF"
 
--- NEW: Function to get player class based on backpack/character tools
--- UPDATED: Now only checks the *first* tool in the list to act as a defining tool
+-- UPDATED: Function to get player class based on abilities in backpack/character
 local function getPlayerClass(targetPlayer)
     local backpack = targetPlayer:FindFirstChildOfClass("Backpack")
 	local characterModel = targetPlayer.Character
     
     if not backpack and not characterModel then return "FRESH" end
 
-    for classAbbr, toolList in pairs(classIdentify) do
-        local definingToolName = toolList[1] -- Check ONLY the first tool
-        if definingToolName then
-            local foundInBackpack = backpack and backpack:FindFirstChild(definingToolName)
-            local foundInCharacter = characterModel and characterModel:FindFirstChild(definingToolName)
-            if foundInBackpack or foundInCharacter then
-                return classAbbr -- Return as soon as the defining tool is found
+    -- Check for any of the ultra abilities
+    -- This scan might be slightly heavier than checking specific tools, but it's what was requested
+    -- Optimization: Check Character (Equipped) first, then Backpack
+    
+    local foundClass = nil
+    
+    local function checkContainer(container)
+        if not container then return nil end
+        for _, item in ipairs(container:GetChildren()) do
+            if item:IsA("Tool") and UltraAbilities[item.Name] then
+                return UltraAbilities[item.Name]
             end
         end
+        return nil
     end
 
-	return "FRESH"
+    foundClass = checkContainer(characterModel)
+    if not foundClass then
+        foundClass = checkContainer(backpack)
+    end
+
+	return foundClass or "FRESH"
 end
 
-
--- ADDED: Function to check if a player has the Observe tool
 local function hasObserveTool(targetPlayer)
     local backpack = targetPlayer:FindFirstChildOfClass("Backpack")
     local characterModel = targetPlayer.Character
@@ -94,13 +103,11 @@ local function hasObserveTool(targetPlayer)
     return hasInBackpack or hasEquipped
 end
 
-
--- Função otimizada para encontrar adornee
 local function getBestAdornee(character)
     return character:FindFirstChild("Head") or character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso") or character:FindFirstChildWhichIsA("BasePart")
 end
 
--- Configuração dos frames e labels por tabela (ADDED Held Item)
+-- Configuração dos frames
 local FRAME_CONFIG = {
     {
         name = "nameFrame",
@@ -242,7 +249,6 @@ function PlayerESP:removeBillboard(player)
     self.dataCache[player] = nil
 end
 
--- Função otimizada para atualizar dados dos players
 function PlayerESP:updatePlayerData(player)
     if not player or not player.Parent then return end
     local cache = self.dataCache[player]
@@ -254,9 +260,8 @@ function PlayerESP:updatePlayerData(player)
     local targetChar = player.Character
     
     local playerClass = getPlayerClass(player)
-    local classColor = class_colors[playerClass] or "#FFFFFF"
+    local classColor = CLASS_COLORS[playerClass] or "#FFFFFF"
     
-    -- ** Check if player has Observe tool **
     local isObserving = hasObserveTool(player)
     
     for i, frameConfig in ipairs(FRAME_CONFIG) do
@@ -265,40 +270,27 @@ function PlayerESP:updatePlayerData(player)
             if label and labelConfig.getData then
                 local value = labelConfig.getData(player, cache, localChar, targetChar)
                 
-                -- Determine the color to use
                 local displayColor = isObserving and OBSERVE_COLOR_HEX or classColor
                 
-                -- Apply color override if observing
                 if isObserving then
-                    label.TextColor3 = Color3.fromHex(OBSERVE_COLOR_HEX) -- Set base color for non-RichText parts
+                    label.TextColor3 = Color3.fromHex(OBSERVE_COLOR_HEX)
                 else
-                    label.TextColor3 = Color3.new(1,1,1) -- Reset to white for RichText handling
+                    label.TextColor3 = Color3.new(1,1,1)
                 end
 
-                -- Format text with RichText, using blue if observing
                 if labelConfig.key == "playerName" then
-                     -- Apply blue color to the entire line if observing
-                    if isObserving then
-                         label.Text = format("<font color='%s'>[%s] %s</font>", displayColor, playerClass, value)
-                    else
-                         label.Text = format("<font color='%s'>[%s]</font> %s", displayColor, playerClass, value)
-                    end
-                elseif labelConfig.key == "distance" or labelConfig.key == "rogueName" or labelConfig.key == "edict" or labelConfig.key == "health" or labelConfig.key == "healthPercent" or labelConfig.key == "heldItem" then -- FIXED TYPO HERE
-                    -- Apply blue color to the entire line if observing
-                     if isObserving then
-                          label.Text = format("<font color='%s'>%s</font>", displayColor, labelConfig.format:format(value))
-                     else
-                          label.Text = labelConfig.format:format(value) -- Keep original format if not observing
-                     end
+                    local nameStr = isObserving and format("<font color='%s'>[%s] %s</font>", displayColor, playerClass, value) or format("<font color='%s'>[%s]</font> %s", displayColor, playerClass, value)
+                    label.Text = nameStr
+                elseif labelConfig.key == "distance" or labelConfig.key == "rogueName" or labelConfig.key == "edict" or labelConfig.key == "health" or labelConfig.key == "healthPercent" or labelConfig.key == "heldItem" then
+                     local str = labelConfig.format:format(value)
+                     label.Text = isObserving and format("<font color='%s'>%s</font>", displayColor, str) or str
                 else
-                    -- Fallback for any other labels
                     label.Text = labelConfig.format:format(value)
                 end
             end
         end
     end
 end
-
 
 function PlayerESP:updateBillboards()
     local currentTime = tick()
@@ -307,7 +299,7 @@ function PlayerESP:updateBillboards()
     local toRemove = {}
     for player, data in pairs(self.espBillboards) do
         if player and player.Parent and player.Character then self:updatePlayerData(player)
-        else table.insert(toRemove, player) end -- Use table.insert
+        else table.insert(toRemove, player) end
     end
     for i = 1, #toRemove do self:removeBillboard(toRemove[i]) end
 end
@@ -353,7 +345,7 @@ function PlayerESP:setTextSize(size)
 end
 
 function PlayerESP:setTextColor(color)
-    for _, data in pairs(self.espBillboards) do for key, label in pairs(data.labels) do if key ~= "playerName" then label.TextColor3 = color end end end -- Avoid overriding playerName base color
+    for _, data in pairs(self.espBillboards) do for key, label in pairs(data.labels) do if key ~= "playerName" then label.TextColor3 = color end end end
 end
 
 function PlayerESP:setDisplayConfig(config)
@@ -361,7 +353,6 @@ function PlayerESP:setDisplayConfig(config)
     for player, billboardData in pairs(self.espBillboards) do
         if billboardData and billboardData.billboard then
             local mainBillboard = billboardData.billboard
-            local anyFrameVisible = false
             for i, frameConfig in ipairs(FRAME_CONFIG) do
                 local frame = billboardData.frames[frameConfig.name]
                 if frame then
@@ -371,10 +362,8 @@ function PlayerESP:setDisplayConfig(config)
                         if self.displayConfig[configKey] ~= false then frameShouldBeVisible = true; break end
                     end
                     frame.Parent = frameShouldBeVisible and mainBillboard or nil
-                    if frameShouldBeVisible then anyFrameVisible = true end
                 end
             end
-            -- mainBillboard.Enabled = anyFrameVisible -- Optional: Hide entire billboard if no content
         end
     end
 end

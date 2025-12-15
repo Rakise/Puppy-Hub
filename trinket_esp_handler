@@ -2,476 +2,203 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local ConnectionManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/Rakise/Puppy-Hub/refs/heads/main/ConnectionManager"))()
 
---// Configuration
-local Config = {
-    ESP = {
-        BillboardSize = UDim2.new(0, 100, 0, 100),
-        TextSize = 14,
-        TextStrokeTransparency = 0.5,
-        TextStrokeColor = Color3.new(0.2, 0.2, 0.2),
-        Font = Enum.Font.SourceSans,
-        MaxProcessPerFrame = 5,
-        -- NEW: Garbage Collection interval
-        GC_INTERVAL = 3.0, -- Check for invalid trinkets every 3 seconds
-    },
-    
-    Colors = {
-        Default = Color3.new(0.7, 0.7, 0.7),
-        Trinkets = {
-            ["Amulet"] = Color3.new(0.7, 0.7, 0.7),
-            ["Old Amulet"] = Color3.new(0.5, 0.5, 0.5),
-            ["Goblet"] = Color3.new(0.8, 0.7, 0.3),
-            ["Ruby"] = Color3.new(1, 0, 0),
-            ["Sapphire"] = Color3.new(0, 0.3, 1),
-            ["Emerald"] = Color3.new(0, 1, 0.3),
-            ["Diamond"] = Color3.new(1, 1, 1),
-            ["Howler Friend"] = Color3.new(0.956862, 0.933333, 0.901960),
-            ["Opal"] = Color3.new(0.4, 0.8, 0.9),
-            ["Idol of the Forgotten"] = Color3.new(0.380392, 0.376470, 0.376470),
-            ["Lost Sunshine"] = Color3.new(1.0, 0.9, 0.2),
-            ["Phoenix Down"] = Color3.new(0.956862, 0.564705, 0.266666),
-            ["Nightstone"] = Color3.new(0.2, 0.2, 0.2),
-            ["Amulet of the White King"] = Color3.new(1, 1, 1),
-            ["Scroll"] = Color3.new(0.9, 0.8, 0.5),
-            ["???"] = Color3.new(0.5, 0, 0.5),
-            ["Azael Horn"] = Color3.new(0.8, 0.1, 0.1),
-            ["Mysterious Artifact"] = Color3.new(0.2, 0.8, 0.2),
-            ["Phoenix Flower"] = Color3.new(0, 0.207843, 0.392157),
-            ["Rift Gem"] = Color3.new(1, 0.223529, 0.768627),
-            ["Candy"] = Color3.new(1, 0.75, 0.8), -- Example color for Candy
-        },
-    },
-    
-    Materials = {
-        Slate = Enum.Material.Slate,
-        Neon = Enum.Material.Neon,
-        Glass = Enum.Material.Glass,
-    },
-    
-    MeshTypes = {
-        Sphere = Enum.MeshType.Sphere,
-    },
-    
-    UI = {
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    },
-    
-    Assets = {
-        PhoenixTexture = "rbxassetid://1536547385",
-    },
-    
-    MeshIDs = {
-        ["5196551436"] = { name = "Amulet" },
-        ["5196577540"] = { name = "Old Amulet" },
-        ["5204003946"] = { name = "Goblet" },
-        ["5196782997"] = { name = "Old Ring" },
-        ["5196776695"] = { name = "Ring" },
-        ["5204453430"] = { name = "Scroll" },
-        -- Gems are identified by color, not by MeshID
-        ["2520762076"] = { name = "Howler Friend" },
-        -- Khei Only
-        ["4027112893"] = { name = "Bound Book"},
-        -- Event Only
-        ["122777605672182"] = { name = "Marshmallow on a Stick"},
-        ["4103271893"] = { name = "Candy" }, -- Updated Candy ID
-    },
-    
-    ColorSequences = {
-        PhoenixDown = {
-            ColorSequenceKeypoint.new(0, Color3.new(1, 4/5, 0)),
-            ColorSequenceKeypoint.new(1, Color3.new(1, 128/255, 0)),
-        },
-        AzaelHorn = {
-            ColorSequenceKeypoint.new(0, Color3.new(1, 2/51, 2/51)),
-            ColorSequenceKeypoint.new(1, Color3.new(1, 2/51, 2/51)),
-        },
-        MysteriousArtifact = {
-            ColorSequenceKeypoint.new(0, Color3.new(38/85, 1, 0)),
-            ColorSequenceKeypoint.new(1, Color3.new(41/85, 1, 0)),
-        },
-        PhoenixFlower = {
-            ColorSequenceKeypoint.new(0, Color3.new(0, 0.207843, 0.392157)),
-            ColorSequenceKeypoint.new(1, Color3.new(1, 0.207843, 0.392157)),
-        },
-    },
-}
-
--- Cache de funções frequentemente usadas
-local tostring = tostring
-local pairs = pairs
-local setmetatable = setmetatable
-local Vector2_new = Vector2.new
-local UDim2_new = UDim2.new
-local Color3_new = Color3.new
-local Instance_new = Instance.new
-
--- Função otimizada para limpar mesh IDs
-local function cleanMeshId(id)
-    local str = tostring(id)
-    str = str:gsub("%%20", "")
-    str = str:gsub("%s+", "")
-    -- Remove rbxassetid:// se presente
-    str = str:gsub("rbxassetid://", "")
-    return str
-end
-
--- Função otimizada para verificar trinkets usando cache de verificações
-local trinketCache = {}
-local function isTrinket(obj)
-    local objType = obj.ClassName
-    -- Cache hit check primeiro
-    if trinketCache[obj] ~= nil then
-        return trinketCache[obj]
-    end
-    
-    -- Verificação otimizada: só verifica se é Part/MeshPart primeiro
-    if objType ~= "Part" and objType ~= "MeshPart" and objType ~= "UnionOperation" then -- Added UnionOperation
-        trinketCache[obj] = false
-        return false
-    end
-    
-    local hasID = obj:FindFirstChild("ID") ~= nil
-    local hasClick = obj:FindFirstChildWhichIsA("ClickDetector", true) ~= nil -- Added ClickDetector check
-    
-    local result = hasID and hasClick
-    trinketCache[obj] = result
-    return result
-end
-
-local function identifyAttachmentTrinket(attachment)
-    for _, subChild in ipairs(attachment:GetChildren()) do
-        if subChild.ClassName == "ParticleEmitter" and tostring(subChild.Texture) == Config.Assets.PhoenixTexture then
-            local cs = subChild.Color
-            if cs and cs.Keypoints and #cs.Keypoints == 2 then
-                local k1, k2 = cs.Keypoints[1], cs.Keypoints[2]
-                if k1.Time == 0 and k2.Time == 1 then
-                    if k1.Value == Config.ColorSequences.PhoenixDown[1].Value and k2.Value == Config.ColorSequences.PhoenixDown[2].Value then
-                        return "Phoenix Down"
-                    elseif k1.Value == Config.ColorSequences.AzaelHorn[1].Value and k2.Value == Config.ColorSequences.AzaelHorn[2].Value then
-                        return "Azael Horn"
-                    elseif k1.Value == Config.ColorSequences.MysteriousArtifact[1].Value and k2.Value == Config.ColorSequences.MysteriousArtifact[2].Value then
-                        return "Mysterious Artifact"
-                    elseif k1.Value == Config.ColorSequences.PhoenixFlower[1].Value and k2.Value == Config.ColorSequences.PhoenixFlower[2].Value then
-                        return "Phoenix Flower"
-                    end
-                end
-            end
-        end
-    end
-end
-
--- Function to get trinket name, prioritizing mesh ID lookup
-local function getTrinketInfo(part)
-    local meshId
-    if part:IsA("MeshPart") then
-        meshId = part.MeshId
-    else
-        local mesh = part:FindFirstChildWhichIsA("SpecialMesh") or part:FindFirstChildWhichIsA("Mesh")
-        meshId = mesh and mesh.MeshId
-    end
-
-    if meshId and meshId ~= "" then
-        local cleanId = cleanMeshId(meshId)
-        local trinketData = Config.MeshIDs[cleanId]
-        if trinketData and trinketData.name then
-            return trinketData.name -- Return name directly from MeshIDs table if found
-        end
-        
-        -- Special Gem Handling (if MeshID matches gem range)
-        if cleanId == "2877143560" or cleanId == "2877143592" or cleanId == "2877143624" then
-             local brickColor = part.BrickColor
-            local colorName = brickColor.Name
-            local colorValue = brickColor.Color
-            
-            if colorName == "Really red" or colorName == "Bright red" or (colorValue.R > 0.7 and colorValue.G < 0.2 and colorValue.B < 0.2) then
-                return "Ruby"
-            elseif colorName == "Bright blue" or colorName == "Cyan" or colorName == "Lapis" or (colorValue.R < 0.2 and colorValue.G < 0.2 and colorValue.B > 0.7) then
-                return "Sapphire"
-            elseif colorName == "Bright green" or colorName == "Lime green" or (colorValue.R < 0.2 and colorValue.G > 0.7 and colorValue.B < 0.2) then
-                return "Emerald"
-            elseif colorName == "White" or colorName == "Institutional white" or (colorValue.R > 0.8 and colorValue.G > 0.8 and colorValue.B > 0.8) then
-                return "Diamond"
-             else
-                return "Rift Gem" -- Fallback for gems if color doesn't match known ones
-             end
-        end
-    end
-
-    -- If no Mesh ID match, proceed with other checks
-    local material = part.Material
-    if material == Config.Materials.Slate then return "Idol of the Forgotten" end
-    if material == Config.Materials.Glass and part:FindFirstChildOfClass("SpecialMesh") then return "Opal" end
-    if material == Config.Materials.Neon then
-        if part.BrickColor == BrickColor.new("Gold") then return "Lost Sunshine" end
-        return part:FindFirstChildOfClass("PointLight") and "Amulet of the White King" or "Nightstone"
-    end
-
-    if part.Transparency == 1 then
-        for _, child in ipairs(part:GetChildren()) do
-            if child.ClassName == "Attachment" then
-                local result = identifyAttachmentTrinket(child)
-                if result then return result end
-            end
-        end
-        -- Check for '???' particle signature if no attachment trinket found
-        local hasOrb = part:FindFirstChild("OrbParticle") and part.OrbParticle:IsA("ParticleEmitter")
-        local hasLight = part:FindFirstChildOfClass("PointLight")
-        local hasSphere = part:FindFirstChildOfClass("SpecialMesh") and part.SpecialMesh.MeshType == Config.MeshTypes.Sphere
-        if hasOrb and hasLight and hasSphere then return "???" end
-    end
-
-    return "Unknown" -- Default return if no identification matches
-end
-
-
 local TrinketESP = {}
 TrinketESP.__index = TrinketESP
+
+-- UPDATED: Color configurations
+local TrinketEspColor = Color3.new(1, 1, 1)
+local ArtifactEspColor = Color3.new(1, 1, 1) -- Can be changed dynamically
+
+-- UPDATED: Meshes and Detection Logic provided by user
+local Meshes = {
+    ["rbxassetid://5196776695"] = "Ring",
+    ["rbxassetid://5204003946"] = "Goblet",
+    ["rbxassetid://5196782997"] = "Old Ring",
+    ["rbxassetid://5204453430"] = "Scroll",
+    ["rbxassetid://5196551436"] = "Amulet",
+    ["rbxassetid://5196577540"] = "Old Amulet",
+    ["rbxassetid://4103271893"] = "Candy",
+    ["rbxassetid://4027112893"] = "Bound Book"
+}
+
+-- Helpers
+local function GetLabelName(obj)
+    local p = obj.Parent
+    if not p then return nil end
+    
+    local color = p.Color
+    local mesh = p:FindFirstChildWhichIsA("SpecialMesh")
+    local attachment = p:FindFirstChild("Attachment")
+    local particle = p:FindFirstChildWhichIsA("ParticleEmitter", true)
+
+    if p:IsA("Part") then
+        if p:FindFirstChild("OrbParticle") and color == Color3.fromRGB(89, 34, 89) then return "???", false end
+        if color == Color3.fromRGB(128, 187, 219) then return "Fairfrozen", true end
+        if color == Color3.fromRGB(164, 187, 190) then return "Diamond", false end
+        if color == Color3.fromRGB(0, 184, 49) then return "Emerald", false end
+        if color == Color3.fromRGB(16, 42, 220) then return "Sapphire", false end
+        if color == Color3.fromRGB(255, 0, 0) then return "Ruby", false end
+        if p:FindFirstChild("OrbParticle") and p.OrbParticle.Texture == "rbxassetid://20443483" then return "Ice Essence", true end
+        if particle and particle.Color.Keypoints[1].Value == Color3.new(1, 0.8, 0) then return "Phoenix Down", true end
+        if attachment and attachment:FindFirstChild("ParticleEmitter") then
+            local pe = attachment.ParticleEmitter
+            if pe.Texture == "rbxassetid://1536547385" then
+                if game.PlaceId == 3541987450 then return "Phoenix Flower", true end
+                if pe.Color.Keypoints[1].Value == Color3.new(0, 1, 0.207843) then return "Azael Horn", true end
+                return "Mysterious Artifact", true
+            end
+        end
+        if p.Material == Enum.Material.Glass and color == Color3.fromRGB(248, 248, 248) and mesh then return "Opal", false end
+        return "Unregistered Artifact", true
+    elseif p:IsA("UnionOperation") then
+        if color == Color3.fromRGB(248, 248, 248) and not p.UsePartColor then return "Lannis Amulet", true end
+        if color == Color3.fromRGB(29, 46, 58) then return "Night Stone", true end
+        if color == Color3.fromRGB(163, 162, 165) then return "Amulet Of The White King", true end
+        if color == Color3.fromRGB(111, 113, 125) then return "Idol Of Forgotten", false end
+    elseif p:IsA("MeshPart") and Meshes[p.MeshId] then
+        return Meshes[p.MeshId], false
+    end
+
+    if mesh and Meshes[mesh.MeshId] then
+        return Meshes[mesh.MeshId], false
+    end
+
+    return nil
+end
+
+local function isTrinket(obj)
+    -- The GetLabelName function expects 'obj' to be the ClickDetector or similar, or we check the parent directly?
+    -- The provided logic says "local p = obj.Parent". This usually means 'obj' is a ClickDetector.
+    -- Rogue Lineage trinkets usually have a ClickDetector inside the part.
+    if obj:IsA("ClickDetector") then
+        local name, isArtifact = GetLabelName(obj)
+        return name ~= nil, name, isArtifact
+    end
+    return false, nil, false
+end
 
 function TrinketESP.new()
     return setmetatable({
         espBillboards = {},
         _connectionManager = ConnectionManager.new(),
         enabled = false,
-        -- Sistema de fila para processamento assíncrono
-        _pendingTrinkets = {},
-        _processingQueue = false,
-        -- Cache para evitar re-verificações
         _processedObjects = {},
-        -- NEW: Garbage collection timestamp
         _lastGCTime = 0,
+        labels = {},     -- Regular trinket labels
+        artilabels = {}, -- Artifact labels
     }, TrinketESP)
 end
 
--- Função otimizada para criar billboard com cor definida pelo próprio trinket
-function TrinketESP:createBillboard(trinket, trinketName)
-    if self.espBillboards[trinket] then return end
-    if trinketName == "Unknown" then return end -- Don't create for unknowns
+function TrinketESP:createBillboard(clickDetector, name, isArtifact)
+    if self.espBillboards[clickDetector] then return end
+    
+    local part = clickDetector.Parent
+    if not part then return end
 
-    local billboard = Instance_new("BillboardGui")
+    local billboard = Instance.new("BillboardGui")
     billboard.Name = "TrinketESP"
-    billboard.Adornee = trinket
+    billboard.Adornee = part
     billboard.LightInfluence = 1
-    billboard.ZIndexBehavior = Config.UI.ZIndexBehavior
     billboard.AlwaysOnTop = true
-    billboard.Size = Config.ESP.BillboardSize
-    billboard.Parent = trinket
+    billboard.Size = UDim2.new(0, 100, 0, 100)
+    billboard.Parent = part
 
-    local label = Instance_new("TextLabel")
-    label.Text = trinketName
-    
-    -- Definir cor baseada no nome do trinket (declarativo)
-    local color = Config.Colors.Trinkets[trinketName] or Config.Colors.Default
-    label.TextColor3 = color
-    
-    -- Ajustar stroke baseado no tipo para melhor visibilidade
-    label.TextStrokeTransparency = Config.ESP.TextStrokeTransparency
-    label.TextStrokeColor3 = Config.ESP.TextStrokeColor
-    
-    label.Font = Config.ESP.Font
-    label.TextSize = Config.ESP.TextSize
+    local label = Instance.new("TextLabel")
+    label.Text = name
+    label.TextColor3 = isArtifact and ArtifactEspColor or TrinketEspColor
+    label.TextStrokeTransparency = 0.5
+    label.TextStrokeColor3 = Color3.new(0,0,0)
+    label.Font = Enum.Font.SourceSans
+    label.TextSize = 14
     label.BackgroundTransparency = 1
     label.BorderSizePixel = 0
-    label.Size = UDim2_new(1, 0, 1, 0)
-    label.Position = UDim2_new(0.5, 0, 0.5, 0)
-    label.AnchorPoint = Vector2_new(0.5, 0.5)
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.Position = UDim2.new(0.5, 0, 0.5, 0)
+    label.AnchorPoint = Vector2.new(0.5, 0.5)
     label.Parent = billboard
 
-    self.espBillboards[trinket] = billboard
-end
-
-function TrinketESP:removeBillboard(trinket)
-    local billboard = self.espBillboards[trinket]
-    if billboard then
-        billboard:Destroy()
-        self.espBillboards[trinket] = nil
+    self.espBillboards[clickDetector] = billboard
+    
+    if isArtifact then
+        table.insert(self.artilabels, label)
+    else
+        table.insert(self.labels, label)
     end
-    trinketCache[trinket] = nil
-    self._processedObjects[trinket] = nil
 end
 
--- SOLUÇÃO 1: Sistema de fila assíncrona
-function TrinketESP:processQueue()
-    if self._processingQueue or #self._pendingTrinkets == 0 then return end
-    
-    self._processingQueue = true
-    
-    -- Processa até X trinkets por frame para evitar lag
-    local maxPerFrame = Config.ESP.MaxProcessPerFrame
-    local processed = 0
-    
-    while #self._pendingTrinkets > 0 and processed < maxPerFrame do
-        local trinket = table.remove(self._pendingTrinkets, 1)
-        
-        -- Verificar se o trinket ainda é válido
-        if trinket and trinket.Parent and not self._processedObjects[trinket] then
-            self._processedObjects[trinket] = true
-            local trinketName = getTrinketInfo(trinket)
-            if trinketName ~= "Unknown" then -- Only create if name is known
-                self:createBillboard(trinket, trinketName)
+function TrinketESP:removeBillboard(clickDetector)
+    local billboard = self.espBillboards[clickDetector]
+    if billboard then
+        -- Remove from labels tables
+        local label = billboard:FindFirstChild("TextLabel")
+        if label then
+            for i, v in ipairs(self.labels) do if v == label then table.remove(self.labels, i) break end end
+            for i, v in ipairs(self.artilabels) do if v == label then table.remove(self.artilabels, i) break end end
+        end
+        billboard:Destroy()
+        self.espBillboards[clickDetector] = nil
+    end
+    self._processedObjects[clickDetector] = nil
+end
+
+function TrinketESP:scanExistingTrinkets()
+    for _, v in ipairs(Workspace:GetDescendants()) do
+        if v:IsA("ClickDetector") and not self._processedObjects[v] then
+            local isTrinket, name, isArtifact = isTrinket(v)
+            if isTrinket then
+                self._processedObjects[v] = true
+                self:createBillboard(v, name, isArtifact)
             end
         end
-        
-        processed = processed + 1
-    end
-    
-    self._processingQueue = false
-    
-    -- Se ainda há trinkets na fila, agenda próximo processamento
-    if #self._pendingTrinkets > 0 then
-        -- Use task.defer instead of RunService.Heartbeat:Wait() for better integration
-        task.defer(function() self:processQueue() end)
     end
 end
 
--- SOLUÇÃO 2: Detecção imediata com processamento assíncrono
-function TrinketESP:onChildAdded(obj)
-    if not self.enabled then return end
-    
-    -- Verificação imediata sem throttling
-    if not isTrinket(obj) or self._processedObjects[obj] then 
-        return 
-    end
-    
-    -- Adiciona à fila para processamento assíncrono
-    table.insert(self._pendingTrinkets, obj)
-    
-    -- Inicia processamento se não está rodando
-    if not self._processingQueue then
-        task.defer(function() self:processQueue() end) -- Use task.defer
-    end
-end
-
-function TrinketESP:onChildRemoved(obj)
-    if not self.enabled or not self.espBillboards[obj] then return end
-    
-    self:removeBillboard(obj)
-    
-    -- Remove da fila pendente se ainda estiver lá
-    for i = #self._pendingTrinkets, 1, -1 do
-        if self._pendingTrinkets[i] == obj then
-            table.remove(self._pendingTrinkets, i)
-            break
-        end
-    end
-end
-
--- SOLUÇÃO 3: Scan inicial otimizado em lotes
-function TrinketESP:scanExistingTrinkets()
-    local workspaceChildren = Workspace:GetChildren()
-    local trinkets = {}
-    
-    -- Primeiro pass: identifica todos os trinkets potenciais
-    for i = 1, #workspaceChildren do
-        local obj = workspaceChildren[i]
-        if isTrinket(obj) and not self._processedObjects[obj] then
-            table.insert(trinkets, obj)
-        end
-    end
-    
-    -- Segundo pass: processa em lotes assíncronos
-    for i = 1, #trinkets do
-        table.insert(self._pendingTrinkets, trinkets[i])
-    end
-    
-    if #self._pendingTrinkets > 0 and not self._processingQueue then
-        task.defer(function() self:processQueue() end) -- Use task.defer
-    end
-end
-
--- NEW: Garbage Collection for invalid trinkets
-function TrinketESP:garbageCollect()
-    if not self.enabled then return end
-    
-    local currentTime = tick()
-    if currentTime - self._lastGCTime < Config.ESP.GC_INTERVAL then
-        return
-    end
-    self._lastGCTime = currentTime
-
-    local trinketsToClear = {}
-    
-    -- Find invalid billboards
-    for trinket, billboardData in pairs(self.espBillboards) do
-        -- Check if trinket (adornee) is no longer valid
-        if not trinket or not trinket.Parent or not billboardData.billboard or not billboardData.billboard.Parent then
-            table.insert(trinketsToClear, trinket)
-        end
-    end
-    
-    -- Clear them
-    for _, trinket in ipairs(trinketsToClear) do
-        self:removeBillboard(trinket)
-    end
-end
-
--- NEW: Public function to clear all billboards manually
 function TrinketESP:clearAllBillboards()
-    print("[Trinket ESP] Clearing all billboards manually...")
-    
-    local trinketsToClear = {}
-    for trinket in pairs(self.espBillboards) do
-        table.insert(trinketsToClear, trinket)
+    for cd, _ in pairs(self.espBillboards) do
+        self:removeBillboard(cd)
     end
-    
-    for _, trinket in ipairs(trinketsToClear) do
-        self:removeBillboard(trinket)
-    end
-    
-    -- Clear caches
-    trinketCache = {}
+    self.labels = {}
+    self.artilabels = {}
     self._processedObjects = {}
-    self._pendingTrinkets = {}
-    self._processingQueue = false
-    
-    -- Immediately scan for trinkets again
     self:scanExistingTrinkets()
 end
 
 function TrinketESP:enable()
     if self.enabled then return end
-    
     self.enabled = true
     
-    -- Scan inicial otimizado
     self:scanExistingTrinkets()
     
-    -- Conexões sem throttling - detecção imediata
-    self._connectionManager:add(Workspace.ChildAdded:Connect(function(obj)
-        self:onChildAdded(obj)
+    self._connectionManager:add(Workspace.DescendantAdded:Connect(function(v)
+        if v:IsA("ClickDetector") then
+            local isT, name, isA = isTrinket(v)
+            if isT then
+                self._processedObjects[v] = true
+                self:createBillboard(v, name, isA)
+            end
+        end
     end))
     
-    self._connectionManager:add(Workspace.ChildRemoved:Connect(function(obj)
-        self:onChildRemoved(obj)
+    self._connectionManager:add(Workspace.DescendantRemoving:Connect(function(v)
+        if self.espBillboards[v] then
+            self:removeBillboard(v)
+        end
     end))
-
-    -- NEW: Start garbage collection loop
+    
+    -- Color update loop (Dynamic colors as requested)
     self._connectionManager:add(RunService.Heartbeat:Connect(function()
-        self:garbageCollect()
+        if not self.enabled then return end
+        -- Note: Color updating logic can be here if TrinketEspColor/ArtifactEspColor change dynamically
+        -- For now they are static, but the structure allows for it.
+        for _, v in pairs(self.labels) do v.TextColor3 = TrinketEspColor end
+        for _, v in pairs(self.artilabels) do v.TextColor3 = ArtifactEspColor end
     end))
 end
 
 function TrinketESP:disable()
     self.enabled = false
     self._connectionManager:disconnectAll()
-    
-    -- Limpeza otimizada
-    for trinket in pairs(self.espBillboards) do
-        self:removeBillboard(trinket)
-    end
-    
-    -- Limpar caches e fila
-    trinketCache = {}
-    self._processedObjects = {}
-    self._pendingTrinkets = {}
-    self._processingQueue = false
-end
-
-function TrinketESP:destroy()
-    self:disable()
-    self._connectionManager = nil
-    self.espBillboards = nil
-    self._processedObjects = nil
-    self._pendingTrinkets = nil
+    self:clearAllBillboards() -- Clean visuals on disable
 end
 
 return TrinketESP
