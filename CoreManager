@@ -225,7 +225,8 @@ local function createMainWindow()
         Center = true,
         AutoShow = true,
         TabPadding = 8,
-        MenuFadeTime = 0.2
+        MenuFadeTime = 0.2,
+        Size = UDim2.fromOffset(650, 600)
     })
 end
 
@@ -319,24 +320,6 @@ local function getManaChargeRemote()
     return remotes:FindFirstChild("ManaCharge") or remotes:FindFirstChild("SetManaChargeState")
 end
 
-local function canUseMana()
-    local character = LocalPlayer.Character
-    if not character then return false end
-
-    if character:FindFirstChild('Grabbed') then return false end
-    if character:FindFirstChild('Climbing') then return false end
-    if character:FindFirstChild('ClimbCoolDown') then return false end
-
-    if character:FindFirstChild('ManaStop') then return false end
-    if character:FindFirstChild('SpellBlocking') then return false end
-    if character:FindFirstChild('ActiveCast') then return false end
-    if character:FindFirstChild('Stun') then return false end
-
-    if CollectionService:HasTag(character, 'Knocked') then return false end
-    if CollectionService:HasTag(character, 'Unconscious') then return false end
-
-    return true
-end
 
 local function startManaCharge()
     local remote = getManaChargeRemote()
@@ -360,59 +343,73 @@ local function stopManaCharge()
     end
 end
 
--- Input Handling for G key (Overwriting/Sinking)
+-- Input Handling for G key
 local function toggleBetterManaCharge(enabled)
     betterManaChargeEnabled = enabled
-    
+
     if enabled then
-        -- Bind G with high priority to sink input, preventing default game behavior
-        ContextActionService:BindActionAtPriority("BetterManaChargeInput", function(actionName, inputState, inputObj)
-            if inputState == Enum.UserInputState.Begin then
+        -- Input Began
+        manaInputConnBegan = UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if input.KeyCode == Enum.KeyCode.G then
                 isChargingHeld = true
-            elseif inputState == Enum.UserInputState.End then
-                isChargingHeld = false
-                stopManaCharge() -- Stop immediately on release
             end
-            return Enum.ContextActionResult.Sink -- Prevent game from seeing G press
-        end, false, 3000, Enum.KeyCode.G)
+        end)
+
+        -- Input Ended
+        manaInputConnEnded = UserInputService.InputEnded:Connect(function(input, gp)
+            if input.KeyCode == Enum.KeyCode.G then
+                isChargingHeld = false
+                stopManaCharge()
+            end
+        end)
     else
-        -- Unbind to restore default behavior
-        ContextActionService:UnbindAction("BetterManaChargeInput")
+        -- Cleanup
+        if manaInputConnBegan then
+            manaInputConnBegan:Disconnect()
+            manaInputConnBegan = nil
+        end
+
+        if manaInputConnEnded then
+            manaInputConnEnded:Disconnect()
+            manaInputConnEnded = nil
+        end
+
         isChargingHeld = false
         stopManaCharge()
     end
 end
 
+
 -- Main Charge Loop (Buffering)
 connMgr:add(RunService.Heartbeat:Connect(function()
     if not betterManaChargeEnabled then return end
-
+    
     local char = LocalPlayer.Character
     if not char then return end
-
+    
     -- Check if we are holding G
     if isChargingHeld then
         -- Check if we are currently charging (Game puts a "Charge" instance in character)
         local isCurrentlyCharging = char:FindFirstChild("Charge") ~= nil
-
+        
         -- If we aren't currently charging, try to start
         if not isCurrentlyCharging then
-            -- Get ping using Player:GetNetworkPing()
-            -- Returns seconds (round trip), convert to ms
-            local pingMs = LocalPlayer:GetNetworkPing() * 1000
-
-            -- User logic: 0.1 + ping / 900
-            local delay = 0.1 + (pingMs / 900)
-
-            if tick() - lastManaChargeAttempt > delay then
-                -- Fire regardless; server handles rejection
-                startManaCharge()
-                lastManaChargeAttempt = tick()
-            end
+             -- Calculate delay based on ping (User Logic: 0.1 + ping/900)
+             local currentPing = 0
+             pcall(function() currentPing = StatsService.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+             local delay = 0.1 + (currentPing / 900)
+             
+             if tick() - lastManaChargeAttempt > delay then
+                 -- We don't check canUseMana() strictly here because we want to buffer the intent
+                 -- However, the user snippet sends fire server repeatedly if not charging.
+                 -- Let's fire it. The server will reject if stunned, but we keep trying.
+                 startManaCharge()
+                 lastManaChargeAttempt = tick()
+             end
         end
     end
 end))
-
 
 
 -- ========================================
