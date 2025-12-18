@@ -19,6 +19,7 @@
     - AA Gun Warning
     - Advanced Movement (Fly, Noclip, CFrame Speed)
     - Better Blocking (Smart Block)
+    - Better Mana Charge (Smart Charge with Buffering)
     
     Uses LinoriaLib for UI management with theme and save support.
 ]]
@@ -36,6 +37,9 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
+local ContextActionService = game:GetService("ContextActionService")
+local StatsService = game:GetService("Stats")
 
 local LocalPlayer = Players.LocalPlayer
 local playerGui = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
@@ -167,6 +171,12 @@ local unwantedBlockConditions = {
     ["Casting"] = true,
 }
 
+-- Better Mana Charge Variables
+local betterManaChargeEnabled = false
+local isChargingHeld = false
+local lastManaChargeAttempt = 0
+local isGaia = game.PlaceId == 5208655184
+
 local features = {
 	PlayerEsp = true,
     TrinketEsp = false,
@@ -250,6 +260,7 @@ end))
 connMgr:add(UserInputService.InputEnded:Connect(function(input)
     if input.KeyCode == Enum.KeyCode.F then
         isBlockingHeld = false
+        -- Fire unblock immediately when F is released
         if betterBlockingEnabled then
             local char = LocalPlayer.Character
             if char then
@@ -292,6 +303,117 @@ connMgr:add(RunService.Heartbeat:Connect(function()
         end
     end
 end))
+
+-- ========================================
+-- BETTER MANA CHARGE LOGIC
+-- ========================================
+
+local function getManaChargeRemote()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local handler = char:FindFirstChild("CharacterHandler")
+    if not handler then return nil end
+    local remotes = handler:FindFirstChild("Remotes")
+    if not remotes then return nil end
+    -- Try finding standard name or the one from Demon Step
+    return remotes:FindFirstChild("ManaCharge") or remotes:FindFirstChild("SetManaChargeState")
+end
+
+local function canUseMana()
+    local character = LocalPlayer.Character
+    if not character then return false end
+
+    if character:FindFirstChild('Grabbed') then return false end
+    if character:FindFirstChild('Climbing') then return false end
+    if character:FindFirstChild('ClimbCoolDown') then return false end
+
+    if character:FindFirstChild('ManaStop') then return false end
+    if character:FindFirstChild('SpellBlocking') then return false end
+    if character:FindFirstChild('ActiveCast') then return false end
+    if character:FindFirstChild('Stun') then return false end
+
+    if CollectionService:HasTag(character, 'Knocked') then return false end
+    if CollectionService:HasTag(character, 'Unconscious') then return false end
+
+    return true
+end
+
+local function startManaCharge()
+    local remote = getManaChargeRemote()
+    if not remote then return end
+    
+    if isGaia then
+        remote:FireServer({math.random(1, 10), math.random()})
+    else
+        remote:FireServer(true)
+    end
+end
+
+local function stopManaCharge()
+    local remote = getManaChargeRemote()
+    if not remote then return end
+    
+    if isGaia then
+        remote:FireServer()
+    else
+        remote:FireServer(false)
+    end
+end
+
+-- Input Handling for G key (Overwriting/Sinking)
+local function toggleBetterManaCharge(enabled)
+    betterManaChargeEnabled = enabled
+    
+    if enabled then
+        -- Bind G with high priority to sink input, preventing default game behavior
+        ContextActionService:BindActionAtPriority("BetterManaChargeInput", function(actionName, inputState, inputObj)
+            if inputState == Enum.UserInputState.Begin then
+                isChargingHeld = true
+            elseif inputState == Enum.UserInputState.End then
+                isChargingHeld = false
+                stopManaCharge() -- Stop immediately on release
+            end
+            return Enum.ContextActionResult.Sink -- Prevent game from seeing G press
+        end, false, 3000, Enum.KeyCode.G)
+    else
+        -- Unbind to restore default behavior
+        ContextActionService:UnbindAction("BetterManaChargeInput")
+        isChargingHeld = false
+        stopManaCharge()
+    end
+end
+
+-- Main Charge Loop (Buffering)
+connMgr:add(RunService.Heartbeat:Connect(function()
+    if not betterManaChargeEnabled then return end
+
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- Check if we are holding G
+    if isChargingHeld then
+        -- Check if we are currently charging (Game puts a "Charge" instance in character)
+        local isCurrentlyCharging = char:FindFirstChild("Charge") ~= nil
+
+        -- If we aren't currently charging, try to start
+        if not isCurrentlyCharging then
+            -- Get ping using Player:GetNetworkPing()
+            -- Returns seconds (round trip), convert to ms
+            local pingMs = LocalPlayer:GetNetworkPing() * 1000
+
+            -- User logic: 0.1 + ping / 900
+            local delay = 0.1 + (pingMs / 900)
+
+            if tick() - lastManaChargeAttempt > delay then
+                -- Fire regardless; server handles rejection
+                startManaCharge()
+                lastManaChargeAttempt = tick()
+            end
+        end
+    end
+end))
+
+
 
 -- ========================================
 -- AA GUN MONITOR LOGIC
@@ -662,6 +784,11 @@ local function createPuppyHubTabs(tabs, fovManager)
     autoBlockGroup:AddToggle('BetterBlockingToggle', {
         Text = 'Better Blocking', Default = false, Tooltip = 'Hold F to keep blocking (waits for stun/action to end)',
         Callback = function(v) betterBlockingEnabled = v end
+    })
+    
+    autoBlockGroup:AddToggle('BetterManaChargeToggle', {
+        Text = 'Better Mana Charge', Default = false, Tooltip = 'Hold G to buffer mana charge (waits for stun to end)',
+        Callback = function(v) toggleBetterManaCharge(v) end
     })
 
     combatVisualsGroup:AddToggle('SpellPercentageToggle', {
