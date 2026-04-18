@@ -417,17 +417,22 @@ end))
 -- ========================================
 
 local function createAirWarningGui()
-    if airWarningGui then return airWarningGui end
-    
+    -- se já existe no PlayerGui, usa ele
+    local existing = playerGui:FindFirstChild("AAWarningGui")
+    if existing then
+        return existing:FindFirstChild("WarningLabel")
+    end
+
+    -- cria novo
     local gui = Instance.new("ScreenGui")
     gui.Name = "AAWarningGui"
     gui.ResetOnSpawn = false
     gui.Parent = playerGui
-    
+
     local label = Instance.new("TextLabel")
     label.Name = "WarningLabel"
     label.Size = UDim2.new(0, 400, 0, 50)
-    label.Position = UDim2.new(1, -420, 1, -100) -- Bottom Right
+    label.Position = UDim2.new(1, -420, 1, -100)
     label.BackgroundTransparency = 0.5
     label.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     label.TextColor3 = Color3.fromRGB(255, 50, 50)
@@ -436,10 +441,9 @@ local function createAirWarningGui()
     label.Text = ""
     label.Visible = false
     label.Parent = gui
-    
+
     return label
 end
-
 local function updateAirMonitor()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
