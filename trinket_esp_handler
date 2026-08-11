@@ -49,7 +49,6 @@ local function GetLabelName(obj)
             end
         end
         if p.Material == Enum.Material.Glass and color == Color3.fromRGB(248, 248, 248) and mesh then return "Opal", false end
-        return "Unregistered Artifact", true
     elseif p:IsA("UnionOperation") then
         if color == Color3.fromRGB(248, 248, 248) and not p.UsePartColor then return "Lannis Amulet", true end
         if color == Color3.fromRGB(29, 46, 58) then return "Night Stone", true end
@@ -63,16 +62,27 @@ local function GetLabelName(obj)
         return Meshes[mesh.MeshId], false
     end
 
+    -- PTDE Fallback: If inside workspace.Trinkets or parent/grandparent is ClickPart
+    local trinketsFolder = Workspace:FindFirstChild("Trinkets")
+    if p.Name == "ClickPart" or (trinketsFolder and (p:IsDescendantOf(trinketsFolder) or (p.Parent and p.Parent:IsDescendantOf(trinketsFolder)))) then
+        return "Trinket", false
+    end
+
     return nil
 end
 
 local function isTrinket(obj)
-    -- The GetLabelName function expects 'obj' to be the ClickDetector or similar, or we check the parent directly?
-    -- The provided logic says "local p = obj.Parent". This usually means 'obj' is a ClickDetector.
-    -- Rogue Lineage trinkets usually have a ClickDetector inside the part.
     if obj:IsA("ClickDetector") then
         local name, isArtifact = GetLabelName(obj)
-        return name ~= nil, name, isArtifact
+        if name then
+            return true, name, isArtifact
+        end
+
+        local p = obj.Parent
+        local trinketsFolder = Workspace:FindFirstChild("Trinkets")
+        if p and (p.Name == "ClickPart" or (trinketsFolder and (p:IsDescendantOf(trinketsFolder) or (p.Parent and p.Parent:IsDescendantOf(trinketsFolder))))) then
+            return true, "Trinket", false
+        end
     end
     return false, nil, false
 end

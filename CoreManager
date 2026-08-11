@@ -177,6 +177,121 @@ local isChargingHeld = false
 local lastManaChargeAttempt = 0
 local isGaia = game.PlaceId == 5208655184
 
+-- PTDE Game Version Check & State Variables
+local PTDE_PLACE_ID = 133317834779462
+local isPTDE = (game.PlaceId == PTDE_PLACE_ID or game.GameId == PTDE_PLACE_ID)
+local fallDamageBlockEnabled = isPTDE
+local autoCollectTrinketsEnabled = false
+local autoCollectDistance = 32
+local lastCollectTime = {}
+
+-- Metamethod Hook for Fall Damage Blocking
+pcall(function()
+    local rawmetatable = getrawmetatable or getmetatable
+    local setreadonly = setreadonly or make_writeable or function() end
+    if rawmetatable and getnamecallmethod then
+        local mt = rawmetatable(game)
+        if mt then
+            setreadonly(mt, false)
+            local oldNamecall = mt.__namecall
+            mt.__namecall = newcclosure(function(self, ...)
+                local method = getnamecallmethod()
+                if (method == "FireServer" or method == "InvokeServer") and type(self) == "Instance" then
+                    if fallDamageBlockEnabled and self.Name == "ApplyFallDamage" then
+                        return nil
+                    end
+                end
+                return oldNamecall(self, ...)
+            end)
+            setreadonly(mt, true)
+        end
+    end
+-- Auto-Tag BodyMovers with 'AllowedBM' tag to prevent game script from removing them
+local function protectBodyMover(obj)
+    if obj:IsA("BodyMover") or obj:IsA("BodyVelocity") or obj:IsA("BodyPosition") or obj:IsA("BodyGyro") or obj:IsA("BodyThrust") or obj:IsA("BodyAngularVelocity") or obj:IsA("VectorForce") or obj:IsA("AlignPosition") then
+        pcall(function()
+            if not CollectionService:HasTag(obj, "AllowedBM") then
+                CollectionService:AddTag(obj, "AllowedBM")
+            end
+        end)
+    end
+end
+
+connMgr:add(LocalPlayer.CharacterAdded:Connect(function(char)
+    connMgr:add(char.DescendantAdded:Connect(protectBodyMover))
+    for _, desc in ipairs(char:GetDescendants()) do
+        protectBodyMover(desc)
+    end
+end))
+
+if LocalPlayer.Character then
+    connMgr:add(LocalPlayer.Character.DescendantAdded:Connect(protectBodyMover))
+    for _, desc in ipairs(LocalPlayer.Character:GetDescendants()) do
+        protectBodyMover(desc)
+    end
+end
+
+-- Auto-Collect Trinkets Loop using fireclickdetector
+local function fireClickSequence(cd)
+    if not cd then return end
+    pcall(function()
+        if fireclickdetector then
+            fireclickdetector(cd, 0, "MouseHoverEnter")
+            task.wait(0.01)
+            fireclickdetector(cd, 0, "MouseClick")
+            task.wait(0.01)
+            fireclickdetector(cd, 0, "MouseHoverLeave")
+        end
+    end)
+end
+
+connMgr:add(RunService.Heartbeat:Connect(function()
+    if not autoCollectTrinketsEnabled then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local now = tick()
+    local trinketsFolder = workspace:FindFirstChild("Trinkets")
+    local candidates = {}
+    
+    if trinketsFolder then
+        for _, desc in ipairs(trinketsFolder:GetDescendants()) do
+            if desc:IsA("ClickDetector") then
+                table.insert(candidates, desc)
+            end
+        end
+    end
+    
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("ClickDetector") and desc.Parent and desc.Parent.Name == "ClickPart" then
+            if not table.find(candidates, desc) then
+                table.insert(candidates, desc)
+            end
+        end
+    end
+    
+    for _, cd in ipairs(candidates) do
+        local parentPart = cd.Parent
+        if parentPart and parentPart:IsA("BasePart") then
+            if not lastCollectTime[cd] or (now - lastCollectTime[cd]) > 0.5 then
+                local dist = (root.Position - parentPart.Position).Magnitude
+                local maxDist = cd.MaxActivationDistance
+                if not maxDist or maxDist == 0 then
+                    maxDist = autoCollectDistance
+                end
+                
+                if dist <= maxDist then
+                    lastCollectTime[cd] = now
+                    task.spawn(fireClickSequence, cd)
+                end
+            end
+        end
+    end
+end))
+
 local features = {
 	PlayerEsp = true,
     TrinketEsp = false,
@@ -202,7 +317,7 @@ local CONFIG = {
         DEFAULT_STUDS_BEHIND = {min = 20, max = 30}
     },
     FOV_CIRCLE = {
-        DEFAULT_COLOR = Color3.fromRGB(255, 182, 193),
+        DEFAULT_COLOR = Color3.fromRGB(147, 112, 219),
         STROKE_THICKNESS = 2,
         TRANSPARENCY = 0.3
     },
@@ -221,12 +336,12 @@ local CONFIG = {
 
 local function createMainWindow()
     return Library:CreateWindow({
-        Title = '[Puppy Hub] 🐾',
+        Title = isPTDE and '[Puppy Hub] 🐾 (PTDE Mode)' or '[Puppy Hub] 🐾',
         Center = true,
         AutoShow = true,
         TabPadding = 8,
         MenuFadeTime = 0.2,
-        Size = UDim2.fromOffset(650, 600)
+        Size = UDim2.fromOffset(540, 440)
     })
 end
 
@@ -678,7 +793,38 @@ local function createPuppyHubTabs(tabs, fovManager)
     })
 
     -- >>> AUTOMATION TAB <<<
-    local automationGroup = tabs.Automation:AddLeftGroupbox('Farming')
+    local ptdeGroup = tabs.Automation:AddLeftGroupbox('PTDE & Trinkets')
+    
+    ptdeGroup:AddToggle('FallDamageBlockToggle', {
+        Text = 'Block Fall Damage',
+        Default = fallDamageBlockEnabled,
+        Tooltip = 'Blocks ApplyFallDamage remote calls',
+        Callback = function(val)
+            fallDamageBlockEnabled = val
+        end
+    })
+    
+    ptdeGroup:AddToggle('AutoCollectTrinketsToggle', {
+        Text = 'Auto Collect Trinkets',
+        Default = false,
+        Tooltip = 'Fires MouseHoverEnter -> MouseClick -> MouseHoverLeave within range',
+        Callback = function(val)
+            autoCollectTrinketsEnabled = val
+        end
+    })
+    
+    ptdeGroup:AddSlider('AutoCollectDistance', {
+        Text = 'Pickup Distance',
+        Default = 32,
+        Min = 5,
+        Max = 100,
+        Rounding = 0,
+        Callback = function(val)
+            autoCollectDistance = val
+        end
+    })
+
+    local automationGroup = tabs.Automation:AddRightGroupbox('Farming')
     
     automationGroup:AddToggle('DayFarmToggle', {
         Text = 'Enable Day Farm',
@@ -896,13 +1042,13 @@ local function main()
     SaveManager:BuildConfigSection(tabs.UISettings)
     ThemeManager:ApplyToTab(tabs.UISettings)
     
-    -- Puppy Theme
-    Library.FontColor = Color3.fromRGB(255, 255, 255)
-    Library.MainColor = Color3.fromRGB(255, 182, 193)
-    Library.BackgroundColor = Color3.fromRGB(255, 204, 213)
-    Library.AccentColor = Color3.fromRGB(255, 105, 180)
-    Library.OutlineColor = Color3.fromRGB(221, 160, 221)
-    Library.RiskColor = Color3.fromRGB(255, 69, 0)
+    -- Sleek Dark Theme (Eye-friendly dark charcoal & slate)
+    Library.FontColor = Color3.fromRGB(230, 230, 235)
+    Library.MainColor = Color3.fromRGB(24, 24, 30)
+    Library.BackgroundColor = Color3.fromRGB(16, 16, 20)
+    Library.AccentColor = Color3.fromRGB(147, 112, 219)
+    Library.OutlineColor = Color3.fromRGB(45, 45, 55)
+    Library.RiskColor = Color3.fromRGB(255, 85, 85)
     Library.AccentColorDark = Library:GetDarkerColor(Library.AccentColor)
     Library:UpdateColorsUsingRegistry()
     
