@@ -21,7 +21,7 @@ local Meshes = {
     ["rbxassetid://4027112893"] = "Bound Book"
 }
 
--- Helper to extract label name
+-- Helper to extract label name from trinket item
 local function GetLabelName(obj)
     local p = obj
     if obj:IsA("ClickDetector") then
@@ -65,32 +65,8 @@ local function GetLabelName(obj)
         return Meshes[mesh.MeshId], false
     end
 
-    -- PTDE / Default Fallback
+    -- Default fallback for PTDE unnamed trinkets
     return "Trinket", false
-end
-
--- Helper to check if an object is a trinket candidate
-local function isTrinket(obj)
-    if not obj then return false, nil, false end
-    
-    local trinketsFolder = Workspace:FindFirstChild("Trinkets")
-    
-    -- Check 1: Inside workspace.Trinkets
-    if trinketsFolder and (obj == trinketsFolder or obj:IsDescendantOf(trinketsFolder)) then
-        local name, isArtifact = GetLabelName(obj)
-        return true, name or "Trinket", isArtifact or false
-    end
-    
-    -- Check 2: ClickDetector or ClickPart
-    if obj:IsA("ClickDetector") then
-        local name, isArtifact = GetLabelName(obj)
-        return true, name or "Trinket", isArtifact or false
-    elseif obj:IsA("BasePart") and (obj.Name == "ClickPart" or obj:FindFirstChild("ClickPart") or obj:FindFirstChildWhichIsA("ClickDetector")) then
-        local name, isArtifact = GetLabelName(obj)
-        return true, name or "Trinket", isArtifact or false
-    end
-    
-    return false, nil, false
 end
 
 function TrinketESP.new()
@@ -99,7 +75,6 @@ function TrinketESP.new()
         _connectionManager = ConnectionManager.new(),
         enabled = false,
         _processedObjects = {},
-        _lastGCTime = 0,
         labels = {},     -- Regular trinket labels
         artilabels = {}, -- Artifact labels
     }, TrinketESP)
@@ -132,7 +107,7 @@ function TrinketESP:createBillboard(target, name, isArtifact)
     label.Text = name or "Trinket"
     label.TextColor3 = isArtifact and ArtifactEspColor or TrinketEspColor
     label.TextStrokeTransparency = 0.2
-    label.TextStrokeColor3 = Color3.new(0,0,0)
+    label.TextStrokeColor3 = Color3.new(0, 0, 0)
     label.Font = Enum.Font.SourceSansBold
     label.TextSize = 15
     label.BackgroundTransparency = 1
@@ -165,40 +140,15 @@ function TrinketESP:removeBillboard(target)
     self._processedObjects[target] = nil
 end
 
-function TrinketESP:scanExistingTrinkets()
+function TrinketESP:scanTrinketsFolder()
     local trinketsFolder = Workspace:FindFirstChild("Trinkets")
+    if not trinketsFolder then return end
     
-    -- 1. Scan direct children of workspace.Trinkets
-    if trinketsFolder then
-        for _, child in ipairs(trinketsFolder:GetChildren()) do
-            if not self._processedObjects[child] then
-                local isT, name, isA = isTrinket(child)
-                if isT then
-                    self._processedObjects[child] = true
-                    self:createBillboard(child, name, isA)
-                end
-            end
-        end
-        -- Scan descendants of workspace.Trinkets
-        for _, desc in ipairs(trinketsFolder:GetDescendants()) do
-            if not self._processedObjects[desc] and (desc:IsA("BasePart") or desc:IsA("ClickDetector")) then
-                local isT, name, isA = isTrinket(desc)
-                if isT then
-                    self._processedObjects[desc] = true
-                    self:createBillboard(desc, name, isA)
-                end
-            end
-        end
-    end
-    
-    -- 2. Scan all ClickDetectors and ClickParts in Workspace
-    for _, v in ipairs(Workspace:GetDescendants()) do
-        if not self._processedObjects[v] and (v:IsA("ClickDetector") or v.Name == "ClickPart") then
-            local isT, name, isA = isTrinket(v)
-            if isT then
-                self._processedObjects[v] = true
-                self:createBillboard(v, name, isA)
-            end
+    for _, child in ipairs(trinketsFolder:GetChildren()) do
+        if not self._processedObjects[child] then
+            self._processedObjects[child] = true
+            local name, isArtifact = GetLabelName(child)
+            self:createBillboard(child, name, isArtifact)
         end
     end
 end
@@ -216,44 +166,41 @@ function TrinketESP:enable()
     if self.enabled then return end
     self.enabled = true
     
-    self:scanExistingTrinkets()
-    
-    -- Listen to new items in Workspace
-    self._connectionManager:add(Workspace.DescendantAdded:Connect(function(v)
-        if not self.enabled then return end
-        if self._processedObjects[v] then return end
-        local isT, name, isA = isTrinket(v)
-        if isT then
-            self._processedObjects[v] = true
-            self:createBillboard(v, name, isA)
-        end
-    end))
-    
-    -- Listen to workspace.Trinkets children
     local trinketsFolder = Workspace:FindFirstChild("Trinkets")
-    if trinketsFolder then
-        self._connectionManager:add(trinketsFolder.ChildAdded:Connect(function(v)
-            if not self.enabled then return end
-            if self._processedObjects[v] then return end
-            local isT, name, isA = isTrinket(v)
-            if isT then
-                self._processedObjects[v] = true
-                self:createBillboard(v, name, isA)
+    if not trinketsFolder then
+        local folderConn
+        folderConn = Workspace.ChildAdded:Connect(function(child)
+            if child.Name == "Trinkets" then
+                if folderConn then folderConn:Disconnect() end
+                self:connectTrinketsFolder(child)
             end
-        end))
+        end)
+        self._connectionManager:add(folderConn)
+    else
+        self:connectTrinketsFolder(trinketsFolder)
     end
+end
+
+function TrinketESP:connectTrinketsFolder(trinketsFolder)
+    if not trinketsFolder then return end
     
-    self._connectionManager:add(Workspace.DescendantRemoving:Connect(function(v)
-        if self.espBillboards[v] then
-            self:removeBillboard(v)
+    -- Listen strictly to workspace.Trinkets ChildAdded & ChildRemoved
+    self._connectionManager:add(trinketsFolder.ChildAdded:Connect(function(child)
+        if not self.enabled then return end
+        if not self._processedObjects[child] then
+            self._processedObjects[child] = true
+            local name, isArtifact = GetLabelName(child)
+            self:createBillboard(child, name, isArtifact)
         end
     end))
     
-    self._connectionManager:add(RunService.Heartbeat:Connect(function()
-        if not self.enabled then return end
-        for _, v in pairs(self.labels) do v.TextColor3 = TrinketEspColor end
-        for _, v in pairs(self.artilabels) do v.TextColor3 = ArtifactEspColor end
+    self._connectionManager:add(trinketsFolder.ChildRemoved:Connect(function(child)
+        if self.espBillboards[child] then
+            self:removeBillboard(child)
+        end
     end))
+    
+    self:scanTrinketsFolder()
 end
 
 function TrinketESP:disable()
