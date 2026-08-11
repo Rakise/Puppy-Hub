@@ -233,16 +233,22 @@ if LocalPlayer.Character then
     end
 end
 
--- Auto-Collect Trinkets Loop using fireclickdetector
+-- Force Mouse Icon to always remain enabled and visible
+connMgr:add(RunService.RenderStepped:Connect(function()
+    UserInputService.MouseIconEnabled = true
+end))
+
+-- Auto-Collect Trinkets Spatial Loop using fireclickdetector and spatial radius scanning
 local function fireClickSequence(cd)
     if not cd then return end
     pcall(function()
         if fireclickdetector then
             fireclickdetector(cd, 0, "MouseHoverEnter")
-            task.wait(0.01)
+            task.wait(0.05)
             fireclickdetector(cd, 0, "MouseClick")
-            task.wait(0.01)
+            task.wait(0.05)
             fireclickdetector(cd, 0, "MouseHoverLeave")
+            task.wait(0.05)
         end
     end)
 end
@@ -256,38 +262,53 @@ connMgr:add(RunService.Heartbeat:Connect(function()
     if not root then return end
     
     local now = tick()
+    local radius = autoCollectDistance or 32
+    
+    -- Perform spatial radius query around player position
+    local overlapParams = OverlapParams.new()
+    overlapParams.FilterType = Enum.RaycastFilterType.Include
+    
     local trinketsFolder = workspace:FindFirstChild("Trinkets")
-    local candidates = {}
-    
     if trinketsFolder then
-        for _, desc in ipairs(trinketsFolder:GetDescendants()) do
-            if desc:IsA("ClickDetector") then
-                table.insert(candidates, desc)
-            end
-        end
+        overlapParams.FilterDescendantsInstances = {trinketsFolder}
+    else
+        overlapParams.FilterDescendantsInstances = {workspace}
     end
     
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("ClickDetector") and desc.Parent and desc.Parent.Name == "ClickPart" then
-            if not table.find(candidates, desc) then
-                table.insert(candidates, desc)
-            end
-        end
-    end
+    local nearbyParts = {}
+    pcall(function()
+        nearbyParts = workspace:GetPartBoundsInRadius(root.Position, radius, overlapParams)
+    end)
     
-    for _, cd in ipairs(candidates) do
-        local parentPart = cd.Parent
-        if parentPart and parentPart:IsA("BasePart") then
-            if not lastCollectTime[cd] or (now - lastCollectTime[cd]) > 0.5 then
-                local dist = (root.Position - parentPart.Position).Magnitude
-                local maxDist = cd.MaxActivationDistance
-                if not maxDist or maxDist == 0 then
-                    maxDist = autoCollectDistance
+    -- Process matching ClickDetectors inside nearby parts
+    local processedCDs = {}
+    for _, part in ipairs(nearbyParts) do
+        if part and part:IsA("BasePart") then
+            local cd = part:FindFirstChildWhichIsA("ClickDetector")
+            if not cd and part.Name == "ClickPart" then
+                cd = part:FindFirstChild("ClickDetector")
+            end
+            if not cd then
+                local clickPart = part:FindFirstChild("ClickPart")
+                if clickPart then
+                    cd = clickPart:FindFirstChildWhichIsA("ClickDetector") or clickPart:FindFirstChild("ClickDetector")
                 end
+            end
+            
+            if cd and not processedCDs[cd] then
+                processedCDs[cd] = true
                 
-                if dist <= maxDist then
-                    lastCollectTime[cd] = now
-                    task.spawn(fireClickSequence, cd)
+                if not lastCollectTime[cd] or (now - lastCollectTime[cd]) > 0.5 then
+                    local dist = (root.Position - part.Position).Magnitude
+                    local maxDist = cd.MaxActivationDistance
+                    if not maxDist or maxDist == 0 then
+                        maxDist = radius
+                    end
+                    
+                    if dist <= maxDist then
+                        lastCollectTime[cd] = now
+                        task.spawn(fireClickSequence, cd)
+                    end
                 end
             end
         end
